@@ -40,7 +40,6 @@ def create_table_if_not_exists(client: bigquery.Client, table_id: str, schema_sq
         query_job.result()
         print(f"    ✅ テーブル {table_id} を作成しました。")
 
-# ★★★ ここが問題だった可能性のある関数 ★★★
 def setup_all_tables(client: bigquery.Client, coin_symbol: str):
     price_table_id = f"{PROJECT_ID}.{DATASET_ID}.{coin_symbol.lower()}_price_history"
     price_schema = "dt TIMESTAMP, date DATE, time TIME, open_price FLOAT64, high_price FLOAT64, low_price FLOAT64, close_price FLOAT64, volume FLOAT64"
@@ -164,6 +163,7 @@ def main():
     print(f"処理を開始します... ({datetime.datetime.now(jst).strftime('%Y-%m-%d %H:%M:%S')})")
     if DEBUG_MODE: print(f"🐞🐞🐞 DEBUG MODE IS ENABLED: DBには各データの先頭 {DEBUG_RECORD_LIMIT} 件のみ保存されます 🐞🐞🐞")
     
+    # ★★★ この try ブロックが正しく閉じられているか確認 ★★★
     try:
         client = bigquery.Client(project=PROJECT_ID)
         print(f"✅ Google Cloud への認証に成功しました。プロジェクト: {client.project}")
@@ -176,4 +176,50 @@ def main():
             price_params = {"symbols": f"{coin}USDT.6", "interval": "5min", "from": int(time.time()) - (86400 * 10), "to": int(time.time())}
             raw_price_data = fetch_api_data(PRICE_API_URL, params=price_params, headers={"api-key": API_KEY})
             price_history = raw_price_data[0].get("history", []) if raw_price_data and raw_price_data[0] else []
-           
+            price_df = process_price_data_for_bq(price_history)
+            if DEBUG_MODE: price_df = price_df.head(DEBUG_RECORD_LIMIT)
+            save_data_to_bigquery(client, price_df, price_table_name)
+            
+            exchange_config = get_exchange_config(coin)
+            for ex_name, conf in exchange_config.items():
+                print(f"\n  -> 取引所 [{ex_name}] のデータを処理中...")
+                exchange_symbols = [f"{contract}{conf['code']}" for contract in conf['contracts']]
+                common_params = {"symbols": ','.join(exchange_symbols), "interval": "5min", "from": int(time.time()) - (86400 * 10), "to": int(time.time())}
+                oi_params = {**common_params, "convert_to_usd": "true"}; headers = {"api-key": API_KEY}
+                
+                time.sleep(2)
+                oi_table_name = f"{coin.lower()}_{ex_name.lower()}_oi_history"
+                raw_oi_data = fetch_api_data(OI_API_URL, params=oi_params, headers=headers)
+                oi_df = process_oi_data_for_bq(raw_oi_data)
+                if DEBUG_MODE: oi_df = oi_df.head(DEBUG_RECORD_LIMIT)
+                save_data_to_bigquery(client, oi_df, oi_table_name)
+                
+                time.sleep(2)
+                lsr_table_name = f"{coin.lower()}_{ex_name.lower()}_lsr_history"
+                raw_lsr_data = fetch_api_data(LSR_API_URL, params=common_params, headers=headers)
+                lsr_df = process_lsr_data_for_bq(raw_lsr_data)
+                if DEBUG_MODE: lsr_df = lsr_df.head(DEBUG_RECORD_LIMIT)
+                save_data_to_bigquery(client, lsr_df, lsr_table_name)
+                
+                time.sleep(2)
+                fr_table_name = f"{coin.lower()}_{ex_name.lower()}_funding_rate_history"
+                raw_fr_data = fetch_api_data(FR_API_URL, params=common_params, headers=headers)
+                fr_df = process_fr_data_for_bq(raw_fr_data)
+                if DEBUG_MODE: fr_df = fr_df.head(DEBUG_RECORD_LIMIT)
+                save_data_to_bigquery(client, fr_df, fr_table_name)
+                
+                print("    ... 次の取引所処理まで5秒待機 ...")
+                time.sleep(5) 
+
+            if coin != TARGET_COINS[-1]: 
+                print("    ... 次の通貨処理まで15秒待機 ...")
+                time.sleep(15)
+
+        print(f"\n{'='*50}\n🎉 全ての処理が正常に完了しました。")
+    # ★★★ この except ブロックが try に対応している ★★★
+    except Exception as e: 
+        print(f"❌ 処理全体で致命的なエラーが発生しました: {e}")
+
+# --- スクリプトの実行 ---
+if __name__ == "__main__":
+    main()
