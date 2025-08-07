@@ -1,0 +1,52 @@
+name: Run Coinalyze to BigQuery ETL
+
+on:
+  # mainブランチにプッシュされた時に実行
+  push:
+    branches:
+      - main
+      - master # リポジトリのデフォルトブランチ名に合わせてください
+
+  # 毎日午前9時 (JST) に定期実行 (UTCで0時)
+  schedule:
+    - cron: '0 0 * * *'
+
+  # 手動で実行できるようにする
+  workflow_dispatch:
+
+jobs:
+  run-etl-script:
+    runs-on: ubuntu-latest # 実行環境としてUbuntuの最新版を使用
+
+    steps:
+      # 1. リポジトリのコードをチェックアウト
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Python 3.10 をセットアップ
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # 3. Google Cloudへ認証
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: 'google-github-actions/auth@v2'
+        with:
+          # GitHub Secretsに保存したサービスアカウントキーを使用
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+      # 4. Pythonのライブラリをインストール
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install google-cloud-bigquery pandas-gbq requests
+
+      # 5. Pythonスクリプトを実行
+      - name: Run Python ETL script
+        env:
+          # Pythonスクリプト内でos.getenv()で読み取れるように環境変数を設定
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          COINALYZE_API_KEY: ${{ secrets.COINALYZE_API_KEY }}
+        run: python run_etl.py
