@@ -173,7 +173,7 @@ def main():
             setup_all_tables(client, coin)
 
             price_table_name = f"{coin.lower()}_price_history"; print(f"  -> 価格データを処理中...")
-            price_params = {"symbols": f"{coin}USDT.6", "interval": "5min", "from": int(time.time()) - (86400 * 10), "to": int(time.time())}
+            price_params = {"symbols": f"{coin}USDT.6", "interval": "1min", "from": int(time.time()) - (86400 * 10), "to": int(time.time())}
             raw_price_data = fetch_api_data(PRICE_API_URL, params=price_params, headers={"api-key": API_KEY})
             price_history = raw_price_data[0].get("history", []) if raw_price_data and raw_price_data[0] else []
             price_df = process_price_data_for_bq(price_history)
@@ -184,7 +184,7 @@ def main():
             for ex_name, conf in exchange_config.items():
                 print(f"\n  -> 取引所 [{ex_name}] のデータを処理中...")
                 exchange_symbols = [f"{contract}{conf['code']}" for contract in conf['contracts']]
-                common_params = {"symbols": ','.join(exchange_symbols), "interval": "5min", "from": int(time.time()) - (86400 * 10), "to": int(time.time())}
+                common_params = {"symbols": ','.join(exchange_symbols), "interval": "1min", "from": int(time.time()) - (86400 * 10), "to": int(time.time())}
                 oi_params = {**common_params, "convert_to_usd": "true"}; headers = {"api-key": API_KEY}
                 
                 time.sleep(2)
