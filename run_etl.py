@@ -88,7 +88,7 @@ def save_data_to_bigquery(client: bigquery.Client, df: pd.DataFrame, table_name:
 # --- データ取得・処理関数 ---
 def get_exchange_config(coin: str) -> dict: return {'Binance': {'code': 'A', 'contracts': [f'{coin}USD_PERP.', f'{coin}USDT_PERP.', f'{coin}USD.', f'{coin}USDT.']},'Bybit': {'code': '6', 'contracts': [f'{coin}USD.', f'{coin}USDT.']},'OKX': {'code': '3', 'contracts': [f'{coin}USD_PERP.', f'{coin}USDT_PERP.', f'{coin}USD.', f'{coin}USDT.']},'BitMEX': {'code': '0', 'contracts': [f'{coin}USD_PERP.', f'{coin}USDT_PERP.', f'{coin}USD.', f'{coin}USDT.']}}
 
-def fetch_api_data(url: str, params: dict, headers: dict, retries: int = 4, backoff_factor: float = 15.0) -> list:
+def fetch_api_data(url: str, params: dict, headers: dict, retries: int = 6, backoff_factor: float = 15.0) -> list:
     """
     APIにリクエストを送信する。レート制限(429)の場合、エクスポネンシャルバックオフでリトライする。
     """
