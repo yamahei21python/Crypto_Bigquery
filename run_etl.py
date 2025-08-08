@@ -27,6 +27,7 @@ OI_API_URL = "https://api.coinalyze.net/v1/open-interest-history"
 PRICE_API_URL = "https://api.coinalyze.net/v1/ohlcv-history"
 LSR_API_URL = "https://api.coinalyze.net/v1/long-short-ratio-history"
 FR_API_URL = "https://api.coinalyze.net/v1/funding-rate-history"
+LIQUIDATION_API_URL = "https://api.coinalyze.net/v1/liquidation-history"
 
 
 # --- BigQuery テーブル操作関数 ---
@@ -55,6 +56,9 @@ def setup_all_tables(client: bigquery.Client, coin_symbol: str):
         fr_table_id = f"{PROJECT_ID}.{DATASET_ID}.{coin_symbol.lower()}_{ex_name.lower()}_funding_rate_history"
         fr_schema = "dt TIMESTAMP, date DATE, time TIME, open_rate FLOAT64, high_rate FLOAT64, low_rate FLOAT64, close_rate FLOAT64"
         create_table_if_not_exists(client, fr_table_id, fr_schema)
+        liq_table_id = f"{PROJECT_ID}.{DATASET_ID}.{coin_symbol.lower()}_{ex_name.lower()}_liquidation_history"
+        liq_schema = "dt TIMESTAMP, date DATE, time TIME, long_liquidations FLOAT64, short_liquidations FLOAT64"
+        create_table_if_not_exists(client, liq_table_id, liq_schema)
 
 def save_data_to_bigquery(client: bigquery.Client, df: pd.DataFrame, table_name: str):
     if df.empty:
@@ -157,13 +161,32 @@ def process_fr_data_for_bq(api_data: list) -> pd.DataFrame:
     aggregated_df['time'] = dt_jst.time
     return aggregated_df.reset_index()[['dt', 'date', 'time', 'open_rate', 'high_rate', 'low_rate', 'close_rate']]
 
+def process_liquidation_data_for_bq(api_data: list) -> pd.DataFrame:
+    if not api_data: return pd.DataFrame()
+    all_dfs = [pd.DataFrame(item['history']) for item in api_data if item.get('history')]
+    if not all_dfs: return pd.DataFrame()
+    df = pd.concat(all_dfs)
+    
+    # レスポンスの 'history' 配列内のオブジェクトから 't'(タイムスタンプ)、'l'(ロング)、's'(ショート)のキーを使用
+    if not all(col in df.columns for col in ['t', 'l', 's']):
+        print("    ⚠️  清算履歴のレスポンスに想定されるキー ('t', 'l', 's') が含まれていません。")
+        return pd.DataFrame()
+
+    df['dt'] = pd.to_datetime(df['t'], unit='s', utc=True)
+    # タイムスタンプごとに各コントラクトの清算額を合計
+    aggregated_df = df.groupby('dt').sum(numeric_only=True).rename(columns={'l': 'long_liquidations', 's': 'short_liquidations'})
+    dt_jst = aggregated_df.index.tz_convert('Asia/Tokyo')
+    aggregated_df['date'] = dt_jst.date
+    aggregated_df['time'] = dt_jst.time
+    return aggregated_df.reset_index()[['dt', 'date', 'time', 'long_liquidations', 'short_liquidations']]
+
+
 # --- メイン実行部 ---
 def main():
     jst = datetime.timezone(datetime.timedelta(hours=9))
     print(f"処理を開始します... ({datetime.datetime.now(jst).strftime('%Y-%m-%d %H:%M:%S')})")
     if DEBUG_MODE: print(f"🐞🐞🐞 DEBUG MODE IS ENABLED: DBには各データの先頭 {DEBUG_RECORD_LIMIT} 件のみ保存されます 🐞🐞🐞")
     
-    # ★★★ この try ブロックが正しく閉じられているか確認 ★★★
     try:
         client = bigquery.Client(project=PROJECT_ID)
         print(f"✅ Google Cloud への認証に成功しました。プロジェクト: {client.project}")
@@ -207,6 +230,14 @@ def main():
                 fr_df = process_fr_data_for_bq(raw_fr_data)
                 if DEBUG_MODE: fr_df = fr_df.head(DEBUG_RECORD_LIMIT)
                 save_data_to_bigquery(client, fr_df, fr_table_name)
+
+                time.sleep(2)
+                liq_table_name = f"{coin.lower()}_{ex_name.lower()}_liquidation_history"
+                # 清算APIもUSD換算を有効にするため、oi_params (`convert_to_usd`を含む) を流用
+                raw_liq_data = fetch_api_data(LIQUIDATION_API_URL, params=oi_params, headers=headers)
+                liq_df = process_liquidation_data_for_bq(raw_liq_data)
+                if DEBUG_MODE: liq_df = liq_df.head(DEBUG_RECORD_LIMIT)
+                save_data_to_bigquery(client, liq_df, liq_table_name)
                 
                 print("    ... 次の取引所処理まで5秒待機 ...")
                 time.sleep(5) 
@@ -216,7 +247,7 @@ def main():
                 time.sleep(15)
 
         print(f"\n{'='*50}\n🎉 全ての処理が正常に完了しました。")
-    # ★★★ この except ブロックが try に対応している ★★★
+
     except Exception as e: 
         print(f"❌ 処理全体で致命的なエラーが発生しました: {e}")
 
